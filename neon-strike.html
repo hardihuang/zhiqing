@@ -366,10 +366,115 @@
 
     // ---------------- 系统机制 ----------------
 
+    // Boss 类
+    class Boss {
+        constructor() {
+            this.x = W / 2;
+            this.y = -100;
+            this.radius = 50;
+            this.maxHp = 500 + (level / 10) * 300;
+            this.hp = this.maxHp;
+            this.speed = 2 + (level / 10) * 0.5;
+            this.damage = 20 + (level / 10) * 10;
+            this.markedForDeletion = false;
+            this.hitFlashTimer = 0;
+            this.phase = 0;
+            this.attackTimer = 0;
+        }
+        update() {
+            // 追踪玩家
+            const dx = player.x - this.x;
+            const dy = player.y - this.y;
+            const dist = Math.hypot(dx, dy);
+            
+            if (dist > 100) {
+                this.x += (dx / dist) * this.speed;
+                this.y += (dy / dist) * this.speed;
+            }
+
+            // 攻击玩家
+            if (dist < player.radius + this.radius && gameState === 'PLAYING') {
+                player.hp -= this.damage;
+                shakeTime = 15;
+                createParticles(player.x, player.y, '#f00', 15);
+                
+                this.x -= (dx / dist) * 20;
+                this.y -= (dy / dist) * 20;
+
+                if (player.hp <= 0) {
+                    triggerGameOver();
+                }
+            }
+
+            if (this.hitFlashTimer > 0) this.hitFlashTimer--;
+        }
+        draw(ctx) {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            
+            if (this.hitFlashTimer > 0) {
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 30;
+                ctx.shadowColor = '#fff';
+            } else {
+                ctx.fillStyle = '#a0f';
+                ctx.shadowBlur = 25;
+                ctx.shadowColor = '#a0f';
+            }
+
+            // 绘制 Boss - 六边形
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (i * Math.PI) / 3;
+                const x = Math.cos(angle) * this.radius;
+                const y = Math.sin(angle) * this.radius;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fill();
+
+            // 核心
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 血条
+            ctx.fillStyle = '#333';
+            ctx.fillRect(-60, -70, 120, 8);
+            ctx.fillStyle = '#a0f';
+            ctx.fillRect(-60, -70, 120 * (this.hp / this.maxHp), 8);
+            
+            // BOSS 标签
+            ctx.fillStyle = '#f0f';
+            ctx.font = 'bold 16px Orbitron';
+            ctx.textAlign = 'center';
+            ctx.fillText('★ BOSS ★', 0, -80);
+            
+            ctx.restore();
+        }
+    }
+
+    let boss = null;
+    let isBossLevel = false;
+
     function spawnWave() {
-        const count = 5 + level * 3;
-        const enemyHp = 30 + level * 15;
-        const enemySpeed = 1.5 + level * 0.1;
+        // 每10关是Boss关
+        isBossLevel = (level % 10 === 0);
+        
+        if (isBossLevel) {
+            // Boss关：清除所有小怪，只生成Boss
+            enemies = [];
+            boss = new Boss();
+            updateHUD();
+            return;
+        }
+        
+        // 普通关：减少小怪数量
+        const count = 3 + Math.floor(level / 2);
+        const enemyHp = 30 + level * 10;
+        const enemySpeed = 1.5 + level * 0.08;
 
         for (let i = 0; i < count; i++) {
             let x, y;
@@ -450,6 +555,8 @@
         bullets = [];
         enemies = [];
         particles = [];
+        boss = null;
+        isBossLevel = false;
         
         gameOverOverlay.classList.remove('active');
         gameState = 'PLAYING';
@@ -458,8 +565,13 @@
     }
 
     function updateHUD() {
-        hudLevel.innerText = `WAVE: ${level}`;
-        hudEnemies.innerText = `ENEMIES: ${enemies.length}`;
+        if (isBossLevel && boss) {
+            hudLevel.innerText = `★ BOSS WAVE: ${level} ★`;
+            hudEnemies.innerText = `BOSS HP: ${Math.floor(boss.hp)}/${boss.maxHp}`;
+        } else {
+            hudLevel.innerText = `WAVE: ${level}`;
+            hudEnemies.innerText = `ENEMIES: ${enemies.length}`;
+        }
         hudStats.innerText = `伤害: ${Math.floor(player.damage)} | 散弹: ${player.multishot}`;
     }
 
@@ -553,6 +665,32 @@
             // -- 更新子弹 --
             bullets.forEach(b => b.update());
             
+            // -- 更新 Boss --
+            if (boss) {
+                boss.update();
+                
+                // 子弹打Boss
+                bullets.forEach(bullet => {
+                    if (!bullet.markedForDeletion && !boss.markedForDeletion) {
+                        const dist = Math.hypot(bullet.x - boss.x, bullet.y - boss.y);
+                        if (dist < boss.radius + 5) {
+                            bullet.markedForDeletion = true;
+                            boss.hp -= bullet.damage;
+                            boss.hitFlashTimer = 3;
+                            createParticles(bullet.x, bullet.y, '#a0f', 5, 4);
+
+                            if (boss.hp <= 0) {
+                                boss.markedForDeletion = true;
+                                createParticles(boss.x, boss.y, '#a0f', 50, 15);
+                                createParticles(boss.x, boss.y, '#fff', 30, 10);
+                                shakeTime = 20;
+                                setTimeout(triggerUpgrade, 1000);
+                            }
+                        }
+                    }
+                });
+            }
+            
             // -- 更新敌人 & 碰撞检测 --
             enemies.forEach(enemy => {
                 enemy.update();
@@ -585,9 +723,15 @@
             if (enemiesBefore !== enemies.length) {
                 updateHUD();
                 // 检查是否过关
-                if (enemies.length === 0) {
+                if (enemies.length === 0 && !boss) {
                     setTimeout(triggerUpgrade, 500); // 稍微延迟一下弹出，展示爆炸
                 }
+            }
+            
+            // 检查Boss是否被击败
+            if (boss && boss.markedForDeletion) {
+                boss = null;
+                isBossLevel = false;
             }
 
             // -- 更新粒子 --
@@ -599,6 +743,8 @@
 
         // 绘制粒子
         particles.forEach(p => p.draw(ctx));
+        // 绘制Boss
+        if (boss) boss.draw(ctx);
         // 绘制敌人
         enemies.forEach(e => e.draw(ctx));
         // 绘制子弹
