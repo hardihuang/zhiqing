@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>冰火人 - Fire and Ice</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            display: flex; justify-content: center; align-items: center;
+            min-height: 100vh; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            font-family: 'Arial', sans-serif;
+        }
+        .game-container { text-align: center; }
+        h1 {
+            color: #fff; margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(255,100,100,0.5), 0 0 10px rgba(100,200,255,0.5);
+        }
+        .instructions { color: #aaa; margin-bottom: 15px; font-size: 14px; }
+        .controls {
+            display: flex; justify-content: center; gap: 40px;
+            margin-bottom: 15px; color: #fff; font-size: 13px;
+        }
+        .control-group { padding: 10px 20px; border-radius: 8px; background: rgba(255,255,255,0.1); }
+        .fire-controls { border: 2px solid #ff6b6b; }
+        .ice-controls { border: 2px solid #4ecdc4; }
+        .interaction { color: #ffd93d; margin-bottom: 10px; font-size: 13px; }
+        canvas { border: 3px solid #333; border-radius: 8px; box-shadow: 0 0 30px rgba(0,0,0,0.5); }
+        .level-info { color: #fff; margin-top: 15px; font-size: 16px; }
+        .message { color: #ffd93d; margin-top: 10px; font-size: 18px; font-weight: bold; }
+        .status { color: #aaa; margin-top: 5px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1>🔥 冰火人 ❄️</h1>
+        <div class="instructions">让火人和冰人分别到达对应颜色的门即可过关！</div>
+        <div class="interaction">💡 互动: 空格键 = 火人推冰人 | Enter键 = 冰人推火人 | 靠近可触发合体技!</div>
+        <div class="controls">
+            <div class="control-group fire-controls">
+                <strong style="color:#ff6b6b">火人 (WASD)</strong><br>W 跳跃 | A 左移 | D 右移 | 空格推
+            </div>
+            <div class="control-group ice-controls">
+                <strong style="color:#4ecdc4">冰人 (↑←→)</strong><br>↑ 跳跃 | ← 左移 | → 右移 | Enter推
+            </div>
+        </div>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="level-info">关卡: <span id="levelNum">1</span> | 宝石: <span id="score">0</span></div>
+        <div class="message" id="message">按 R 重置关卡</div>
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const levelNumEl = document.getElementById('levelNum');
+        const scoreEl = document.getElementById('score');
+        const messageEl = document.getElementById('message');
+        const statusEl = document.getElementById('status');
+
+        let currentLevel = 1, score = 0, gameWon = false;
+        let comboTimer = 0, comboActive = false;
+
+        const fireBoy = { 
+            x: 50, y: 500, w: 30, h: 40, 
+            vx: 0, vy: 0, speed: 5, jump: 12, 
+            onGround: false, reached: false,
+            pushCooldown: 0, beingPushed: {x:0, y:0, timer:0}
+        };
+        const iceGirl = { 
+            x: 100, y: 500, w: 30, h: 40, 
+            vx: 0, vy: 0, speed: 5, jump: 12, 
+            onGround: false, reached: false,
+            pushCooldown: 0, beingPushed: {x:0, y:0, timer:0}
+        };
+
+        const levels = [
+            {
+                platforms: [{x:0,y:550,w:800,h:50},{x:200,y:450,w:150,h:20},{x:450,y:350,w:150,h:20},{x:650,y:250,w:150,h:20}],
+                firePools: [], icePools: [], greenPools: [],
+                switches: [],
+                fireDoor: {x:720,y:210,w:40,h:40}, iceDoor: {x:670,y:210,w:40,h:40},
+                diamonds: [{x:275,y:410,c:false},{x:525,y:310,c:false},{x:725,y:210,c:false}]
+            },
+            {
+                platforms: [{x:0,y:550,w:200,h:50},{x:300,y:550,w:200,h:50},{x:600,y:550,w:200,h:50},{x:150,y:420,w:100,h:20},{x:350,y:350,w:100,h:20},{x:550,y:280,w:100,h:20},{x:250,y:200,w:300,h:20}],
+                firePools: [{x:200,y:530,w:100,h:20}], icePools: [{x:500,y:530,w:100,h:20}], greenPools: [],
+                switches: [{x:400,y:330,w:30,h:10,type:'bridge',active:false,targets:[{x:500,y:400,w:100,h:20}]}],
+                fireDoor: {x:480,y:160,w:40,h:40}, iceDoor: {x:280,y:160,w:40,h:40},
+                diamonds: [{x:200,y:380,c:false},{x:400,y:310,c:false},{x:600,y:240,c:false}]
+            },
+            {
+                platforms: [{x:0,y:550,w:150,h:50},{x:250,y:550,w:100,h:50},{x:450,y:550,w:100,h:50},{x:650,y:550,w:150,h:50},{x:100,y:450,w:80,h:20},{x:250,y:380,w:80,h:20},{x:400,y:320,w:80,h:20},{x:550,y:260,w:80,h:20},{x:700,y:200,w:80,h:20},{x:350,y:150,w:100,h:20}],
+                firePools: [], icePools: [], greenPools: [{x:150,y:530,w:100,h:20},{x:350,y:530,w:100,h:20},{x:550,y:530,w:100,h:20}],
+                switches: [{x:380,y:300,w:30,h:10,type:'platform',active:false}],
+                fireDoor: {x:400,y:110,w:40,h:40}, iceDoor: {x:360,y:110,w:40,h:40},
+                diamonds: [{x:140,y:410,c:false},{x:290,y:340,c:false},{x:440,y:280,c:false},{x:590,y:220,c:false},{x:740,y:160,c:false}]
+            }
+        ];
+
+        let lvl = levels[0];
+        const keys = {};
+        const GRAVITY = 0.6, FRICTION = 0.8;
+
+        document.addEventListener('keydown', e => { 
+            keys[e.key] = true; 
+            keys[e.code] = true;
+            if(e.key==='r'||e.key==='R') resetLevel();
+            if(e.code==='Space' && fireBoy.pushCooldown <= 0) pushPlayer(fireBoy, iceGirl, 1);
+            if(e.key==='Enter' && iceGirl.pushCooldown <= 0) pushPlayer(iceGirl, fireBoy, -1);
+        });
+        document.addEventListener('keyup', e => { 
+            keys[e.key] = false; 
+            keys[e.code] = false;
+        });
+
+        function resetLevel() {
+            lvl = levels[currentLevel-1];
+            fireBoy.x = 50; fireBoy.y = 500; fireBoy.vx = 0; fireBoy.vy = 0; 
+            fireBoy.reached = false; fireBoy.pushCooldown = 0;
+            fireBoy.beingPushed = {x:0, y:0, timer:0};
+            iceGirl.x = 100; iceGirl.y = 500; iceGirl.vx = 0; iceGirl.vy = 0; 
+            iceGirl.reached = false; iceGirl.pushCooldown = 0;
+            iceGirl.beingPushed = {x:0, y:0, timer:0};
+            gameWon = false; comboActive = false; comboTimer = 0;
+            if(lvl.switches) lvl.switches.forEach(s => s.active = false);
+            messageEl.textContent = '按 R 重置关卡 | 空格/Enter 互相推动';
+            statusEl.textContent = '';
+        }
+
+        // 推动机制
+        function pushPlayer(pusher, target, direction) {
+            const dist = Math.hypot(pusher.x - target.x, pusher.y - target.y);
+            if (dist > 80) {
+                statusEl.textContent = '太远了，靠近一点才能推动！';
+                setTimeout(() => statusEl.textContent = '', 2000);
+                return;
+            }
+            
+            pusher.pushCooldown = 30;
+            target.beingPushed = {
+                x: direction * 15,
+                y: -5,
+                timer: 10
+            };
+            
+            // 检查是否触发合体技
+            if (dist < 50) {
+                activateCombo();
+            }
+            
+            statusEl.textContent = pusher === fireBoy ? '火人推了冰人！' : '冰人推了火人！';
+            setTimeout(() => statusEl.textContent = '', 1500);
+        }
+
+        // 合体技 - 双方获得短暂加速和无敌
+        function activateCombo() {
+            comboActive = true;
+            comboTimer = 180; // 3秒
+            statusEl.textContent = '🔥❄️ 合体技激活！无敌加速！';
+        }
+
+        function updatePlayer(p, left, right, jump, isFire) {
+            const speed = comboActive ? p.speed * 1.5 : p.speed;
+            
+            // 处理被推动
+            if (p.beingPushed.timer > 0) {
+                p.vx = p.beingPushed.x;
+                p.vy = p.beingPushed.y;
+                p.beingPushed.timer--;
+            } else {
+                // 正常移动
+                if (keys[left]) p.vx = -speed;
+                else if (keys[right]) p.vx = speed;
+                else p.vx *= FRICTION;
+
+                if (keys[jump] && p.onGround) { 
+                    p.vy = -p.jump; 
+                    p.onGround = false; 
+                }
+            }
+
+            p.vy += GRAVITY;
+            p.x += p.vx; 
+            p.y += p.vy;
+            p.onGround = false;
+
+            // 边界
+            if (p.x < 0) p.x = 0;
+            if (p.x + p.w > canvas.width) p.x = canvas.width - p.w;
+
+            // 平台碰撞
+            lvl.platforms.forEach(plat => {
+                if (p.x < plat.x + plat.w && p.x + p.w > plat.x && 
+                    p.y + p.h > plat.y && p.y + p.h < plat.y + plat.h + 20 && p.vy > 0) {
+                    p.y = plat.y - p.h; p.vy = 0; p.onGround = true;
+                }
+            });
+
+            // 开关检测
+            if (lvl.switches) {
+                lvl.switches.forEach(sw => {
+                    if (p.x + p.w/2 > sw.x && p.x + p.w/2 < sw.x + sw.w &&
+                        p.y + p.h > sw.y && p.y < sw.y + sw.h) {
+                        sw.active = true;
+                    }
+                });
+            }
+
+            // 危险区域
+            if (!comboActive) {
+                const allPools = [...lvl.firePools, ...lvl.icePools, ...lvl.greenPools];
+                allPools.forEach(pool => {
+                    if (p.x + p.w/2 > pool.x && p.x + p.w/2 < pool.x + pool.w && 
+                        p.y + p.h > pool.y && p.y < pool.y + pool.h) {
+                        if ((isFire && lvl.icePools.includes(pool)) || 
+                            (!isFire && lvl.firePools.includes(pool)) || 
+                            lvl.greenPools.includes(pool)) {
+                            resetLevel(); 
+                            messageEl.textContent = '游戏结束！小心危险区域！';
+                        }
+                    }
+                });
+            }
+
+            // 宝石收集
+            lvl.diamonds.forEach(d => {
+                if (!d.c && Math.hypot(p.x+p.w/2-d.x, p.y+p.h/2-d.y) < 20) { 
+                    d.c = true; score++; scoreEl.textContent = score; 
+                }
+            });
+
+            // 门检测
+            const door = isFire ? lvl.fireDoor : lvl.iceDoor;
+            if (p.x + p.w/2 > door.x && p.x + p.w/2 < door.x + door.w && 
+                p.y + p.h > door.y && p.y < door.y + door.h) {
+                p.reached = true;
+            }
+
+            // 冷却
+            if (p.pushCooldown > 0) p.pushCooldown--;
+        }
+
+        function checkWin() {
+            if (fireBoy.reached && iceGirl.reached && !gameWon) {
+                gameWon = true;
+                if (currentLevel < levels.length) {
+                    messageEl.textContent = '关卡完成！3秒后进入下一关...';
+                    setTimeout(() => { 
+                        currentLevel++; 
+                        levelNumEl.textContent = currentLevel; 
+                        resetLevel(); 
+                    }, 3000);
+                } else {
+                    messageEl.textContent = '🎉 恭喜通关所有关卡！按 R 重新开始';
+                }
+            }
+        }
+
+        function draw() {
+            // 背景
+            const grad = ctx.createLinearGradient(0,0,0,canvas.height);
+            if (comboActive) {
+                grad.addColorStop(0,'#4a1a4a'); grad.addColorStop(1,'#2e162e');
+            } else {
+                grad.addColorStop(0,'#1a1a2e'); grad.addColorStop(1,'#16213e');
+            }
+            ctx.fillStyle = grad; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+            // 平台
+            ctx.fillStyle = '#555';
+            lvl.platforms.forEach(p => { 
+                ctx.fillRect(p.x,p.y,p.w,p.h); 
+                ctx.strokeStyle='#777'; ctx.strokeRect(p.x,p.y,p.w,p.h); 
+            });
+
+            // 开关生成的平台
+            if (lvl.switches) {
+                lvl.switches.forEach(sw => {
+                    if (sw.active && sw.targets) {
+                        ctx.fillStyle = '#aa0';
+                        sw.targets.forEach(t => ctx.fillRect(t.x,t.y,t.w,t.h));
+                    }
+                    // 绘制开关
+                    ctx.fillStyle = sw.active ? '#0f0' : '#666';
+                    ctx.fillRect(sw.x, sw.y, sw.w, sw.h);
+                });
+            }
+
+            // 危险池
+            lvl.firePools.forEach(p => { ctx.fillStyle='#ff4444'; ctx.fillRect(p.x,p.y,p.w,p.h); });
+            lvl.icePools.forEach(p => { ctx.fillStyle='#44ffff'; ctx.fillRect(p.x,p.y,p.w,p.h); });
+            lvl.greenPools.forEach(p => { ctx.fillStyle='#44ff44'; ctx.fillRect(p.x,p.y,p.w,p.h); });
+
+            // 宝石
+            lvl.diamonds.forEach(d => {
+                if (!d.c) {
+                    ctx.fillStyle = comboActive ? '#ff00ff' : '#ffd700';
+                    ctx.beginPath();
+                    ctx.moveTo(d.x, d.y - 10);
+                    ctx.lineTo(d.x + 10, d.y);
+                    ctx.lineTo(d.x, d.y + 10);
+                    ctx.lineTo(d.x - 10, d.y);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            });
+
+            // 门
+            const fd = lvl.fireDoor;
+            ctx.fillStyle = fireBoy.reached ? '#ffaa00' : '#ff4444';
+            ctx.fillRect(fd.x, fd.y, fd.w, fd.h);
+            ctx.fillStyle = '#fff'; ctx.font = '12px Arial'; 
+            ctx.fillText('火', fd.x+12, fd.y+25);
+
+            const id = lvl.iceDoor;
+            ctx.fillStyle = iceGirl.reached ? '#00aaff' : '#4444ff';
+            ctx.fillRect(id.x, id.y, id.w, id.h);
+            ctx.fillText('冰', id.x+12, id.y+25);
+
+            // 火人
+            ctx.fillStyle = comboActive ? '#ff00ff' : '#ff6b6b';
+            ctx.fillRect(fireBoy.x, fireBoy.y, fireBoy.w, fireBoy.h);
+            ctx.fillStyle = '#fff'; 
+            ctx.fillRect(fireBoy.x+5, fireBoy.y+8, 6, 6); 
+            ctx.fillRect(fireBoy.x+19, fireBoy.y+8, 6, 6);
+            if (fireBoy.pushCooldown > 0) {
+                ctx.fillStyle = '#ff0';
+                ctx.fillText('!', fireBoy.x+12, fireBoy.y-5);
+            }
+
+            // 冰人
+            ctx.fillStyle = comboActive ? '#ff00ff' : '#4ecdc4';
+            ctx.fillRect(iceGirl.x, iceGirl.y, iceGirl.w, iceGirl.h);
+            ctx.fillStyle = '#fff'; 
+            ctx.fillRect(iceGirl.x+5, iceGirl.y+8, 6, 6); 
+            ctx.fillRect(iceGirl.x+19, iceGirl.y+8, 6, 6);
+            if (iceGirl.pushCooldown > 0) {
+                ctx.fillStyle = '#ff0';
+                ctx.fillText('!', iceGirl.x+12, iceGirl.y-5);
+            }
+
+            // 连线（靠近时）
+            const dist = Math.hypot(fireBoy.x - iceGirl.x, fireBoy.y - iceGirl.y);
+            if (dist < 80) {
+                ctx.strokeStyle = comboActive ? '#f0f' : '#ff0';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(fireBoy.x + fireBoy.w/2, fireBoy.y + fireBoy.h/2);
+                ctx.lineTo(iceGirl.x + iceGirl.w/2, iceGirl.y + iceGirl.h/2);
+                ctx.stroke();
+            }
+        }
+
+        function gameLoop() {
+            if (comboTimer > 0) {
+                comboTimer--;
+                if (comboTimer <= 0) {
+                    comboActive = false;
+                    statusEl.textContent = '合体技结束';
+                    setTimeout(() => statusEl.textContent = '', 1000);
+                }
+            }
+            
+            updatePlayer(fireBoy, 'a', 'd', 'w', true);
+            updatePlayer(iceGirl, 'ArrowLeft', 'ArrowRight', 'ArrowUp', false);
+            checkWin();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        resetLevel();
+        gameLoop();
+    </script>
+</body>
+</html>
