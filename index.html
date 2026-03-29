@@ -29,6 +29,17 @@
         .level-info { color: #fff; margin-top: 15px; font-size: 16px; }
         .message { color: #ffd93d; margin-top: 10px; font-size: 18px; font-weight: bold; }
         .status { color: #aaa; margin-top: 5px; font-size: 12px; }
+        .audio-controls { 
+            color: #fff; margin-top: 10px; font-size: 13px; 
+            display: flex; justify-content: center; gap: 20px;
+        }
+        .audio-btn {
+            background: rgba(255,255,255,0.1); border: 1px solid #666;
+            color: #fff; padding: 5px 15px; border-radius: 5px;
+            cursor: pointer; font-size: 12px;
+        }
+        .audio-btn:hover { background: rgba(255,255,255,0.2); }
+        .audio-btn.active { background: rgba(100,200,100,0.3); border-color: #4a4; }
     </style>
 </head>
 <body>
@@ -48,6 +59,10 @@
         <div class="level-info">关卡: <span id="levelNum">1</span> | 宝石: <span id="score">0</span></div>
         <div class="message" id="message">按 R 重置关卡</div>
         <div class="status" id="status"></div>
+        <div class="audio-controls">
+            <button class="audio-btn" id="bgmBtn" onclick="toggleBGM()">🎵 背景音乐: 关</button>
+            <button class="audio-btn" id="sfxBtn" onclick="toggleSFX()">🔊 音效: 开</button>
+        </div>
     </div>
 
     <script>
@@ -60,6 +75,114 @@
 
         let currentLevel = 1, score = 0, gameWon = false;
         let comboTimer = 0, comboActive = false;
+        let bgmEnabled = false, sfxEnabled = true;
+
+        // 音频上下文
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // 生成音效
+        function createTone(freq, type, duration, volume = 0.3) {
+            if (!sfxEnabled) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.frequency.value = freq;
+            osc.type = type;
+            gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        // 各种音效
+        const sfx = {
+            jump: () => createTone(400, 'sine', 0.15, 0.2),
+            land: () => createTone(200, 'triangle', 0.1, 0.15),
+            push: () => {
+                createTone(300, 'sawtooth', 0.1, 0.2);
+                setTimeout(() => createTone(400, 'sawtooth', 0.1, 0.2), 50);
+            },
+            combo: () => {
+                [523, 659, 784, 1047].forEach((f, i) => 
+                    setTimeout(() => createTone(f, 'square', 0.3, 0.15), i * 100));
+            },
+            diamond: () => {
+                createTone(880, 'sine', 0.1, 0.2);
+                setTimeout(() => createTone(1760, 'sine', 0.2, 0.15), 50);
+            },
+            win: () => {
+                [523, 659, 784, 1047, 1319].forEach((f, i) => 
+                    setTimeout(() => createTone(f, 'triangle', 0.4, 0.2), i * 150));
+            },
+            die: () => {
+                createTone(200, 'sawtooth', 0.3, 0.3);
+                setTimeout(() => createTone(150, 'sawtooth', 0.4, 0.3), 100);
+            },
+            switch: () => createTone(600, 'square', 0.15, 0.2),
+            levelComplete: () => {
+                [440, 554, 659, 880].forEach((f, i) => 
+                    setTimeout(() => createTone(f, 'triangle', 0.3, 0.2), i * 200));
+            }
+        };
+
+        // 背景音乐 - 使用Web Audio API生成简单的循环旋律
+        let bgmOscillators = [];
+        let bgmInterval = null;
+        const bgmNotes = [261.63, 293.66, 329.63, 349.23, 392.00, 349.23, 329.63, 293.66]; // C大调音阶
+        
+        function playBGM() {
+            if (!bgmEnabled || bgmInterval) return;
+            let noteIndex = 0;
+            bgmInterval = setInterval(() => {
+                if (!bgmEnabled) {
+                    clearInterval(bgmInterval);
+                    bgmInterval = null;
+                    return;
+                }
+                const freq = bgmNotes[noteIndex % bgmNotes.length];
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.frequency.value = freq / 2; // 低八度
+                osc.type = 'sine';
+                gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.8);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.8);
+                noteIndex++;
+            }, 1000);
+        }
+
+        function stopBGM() {
+            if (bgmInterval) {
+                clearInterval(bgmInterval);
+                bgmInterval = null;
+            }
+        }
+
+        function toggleBGM() {
+            bgmEnabled = !bgmEnabled;
+            document.getElementById('bgmBtn').textContent = bgmEnabled ? '🎵 背景音乐: 开' : '🎵 背景音乐: 关';
+            document.getElementById('bgmBtn').classList.toggle('active', bgmEnabled);
+            if (bgmEnabled) {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                playBGM();
+            } else {
+                stopBGM();
+            }
+        }
+
+        function toggleSFX() {
+            sfxEnabled = !sfxEnabled;
+            document.getElementById('sfxBtn').textContent = sfxEnabled ? '🔊 音效: 开' : '🔊 音效: 关';
+            document.getElementById('sfxBtn').classList.toggle('active', sfxEnabled);
+        }
+
+        // 初始化音频按钮状态
+        document.getElementById('sfxBtn').classList.add('active');
 
         const fireBoy = { 
             x: 50, y: 500, w: 30, h: 40, 
@@ -316,6 +439,7 @@
                 activateCombo();
             }
             
+            sfx.push();
             statusEl.textContent = pusher === fireBoy ? '火人推了冰人！' : '冰人推了火人！';
             setTimeout(() => statusEl.textContent = '', 1500);
         }
@@ -324,6 +448,7 @@
         function activateCombo() {
             comboActive = true;
             comboTimer = 180; // 3秒
+            sfx.combo();
             statusEl.textContent = '🔥❄️ 合体技激活！无敌加速！';
         }
 
@@ -343,7 +468,8 @@
 
                 if (keys[jump] && p.onGround) { 
                     p.vy = -p.jump; 
-                    p.onGround = false; 
+                    p.onGround = false;
+                    sfx.jump(); 
                 }
             }
 
@@ -357,10 +483,12 @@
             if (p.x + p.w > canvas.width) p.x = canvas.width - p.w;
 
             // 平台碰撞
+            let wasOnGround = p.onGround;
             lvl.platforms.forEach(plat => {
                 if (p.x < plat.x + plat.w && p.x + p.w > plat.x && 
                     p.y + p.h > plat.y && p.y + p.h < plat.y + plat.h + 20 && p.vy > 0) {
                     p.y = plat.y - p.h; p.vy = 0; p.onGround = true;
+                    if (!wasOnGround) sfx.land();
                 }
             });
 
@@ -369,6 +497,7 @@
                 lvl.switches.forEach(sw => {
                     if (p.x + p.w/2 > sw.x && p.x + p.w/2 < sw.x + sw.w &&
                         p.y + p.h > sw.y && p.y < sw.y + sw.h) {
+                        if (!sw.active) sfx.switch();
                         sw.active = true;
                     }
                 });
@@ -383,6 +512,7 @@
                         if ((isFire && lvl.icePools.includes(pool)) || 
                             (!isFire && lvl.firePools.includes(pool)) || 
                             lvl.greenPools.includes(pool)) {
+                            sfx.die();
                             resetLevel(); 
                             messageEl.textContent = '游戏结束！小心危险区域！';
                         }
@@ -394,6 +524,7 @@
             lvl.diamonds.forEach(d => {
                 if (!d.c && Math.hypot(p.x+p.w/2-d.x, p.y+p.h/2-d.y) < 20) { 
                     d.c = true; score++; scoreEl.textContent = score; 
+                    sfx.diamond();
                 }
             });
 
@@ -411,11 +542,13 @@
         function checkWin() {
             if (fireBoy.reached && iceGirl.reached && !gameWon) {
                 gameWon = true;
+                sfx.win();
                 if (currentLevel < levels.length) {
                     messageEl.textContent = '关卡完成！3秒后进入下一关...';
                     setTimeout(() => { 
                         currentLevel++; 
-                        levelNumEl.textContent = currentLevel; 
+                        levelNumEl.textContent = currentLevel;
+                        sfx.levelComplete();
                         resetLevel(); 
                     }, 3000);
                 } else {
@@ -424,15 +557,39 @@
             }
         }
 
+        // 背景粒子
+        let particles = [];
+        for (let i = 0; i < 50; i++) {
+            particles.push({
+                x: Math.random() * 800,
+                y: Math.random() * 600,
+                size: Math.random() * 3 + 1,
+                speedY: Math.random() * 0.5 + 0.1,
+                opacity: Math.random() * 0.5 + 0.1
+            });
+        }
+
         function draw() {
-            // 背景
+            // 动态背景
             const grad = ctx.createLinearGradient(0,0,0,canvas.height);
             if (comboActive) {
-                grad.addColorStop(0,'#4a1a4a'); grad.addColorStop(1,'#2e162e');
+                grad.addColorStop(0,'#4a1a4a'); grad.addColorStop(0.5,'#2e162e'); grad.addColorStop(1,'#1a0a1a');
             } else {
-                grad.addColorStop(0,'#1a1a2e'); grad.addColorStop(1,'#16213e');
+                grad.addColorStop(0,'#1a1a2e'); grad.addColorStop(0.5,'#16213e'); grad.addColorStop(1,'#0f0f1a');
             }
             ctx.fillStyle = grad; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+            // 绘制背景粒子
+            particles.forEach(p => {
+                p.y -= p.speedY;
+                if (p.y < 0) p.y = 600;
+                ctx.fillStyle = comboActive ? 
+                    `rgba(255,100,255,${p.opacity})` : 
+                    `rgba(100,150,255,${p.opacity})`;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
 
             // 平台
             ctx.fillStyle = '#555';
